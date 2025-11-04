@@ -76,9 +76,16 @@ def extract_kv_cache_and_attention(model, inputs, device):
                 if len(output) >= 3:
                     present = output[2]  # present是(key, value)的元组
                     if present is not None and isinstance(present, tuple):
-                        key, value = present
-                        storage_dict[f'layer_{layer_idx}_key'] = key.detach().cpu()
-                        storage_dict[f'layer_{layer_idx}_value'] = value.detach().cpu()
+                        if len(present) >= 2:
+                            key, value = present[0], present[1]
+                            # 确保 key 和 value 不是 None，并且有 detach 方法
+                            if key is not None and value is not None:
+                                if hasattr(key, 'detach') and hasattr(value, 'detach'):
+                                    try:
+                                        storage_dict[f'layer_{layer_idx}_key'] = key.detach().cpu()
+                                        storage_dict[f'layer_{layer_idx}_value'] = value.detach().cpu()
+                                    except AttributeError:
+                                        pass  # 如果 detach 失败，跳过
         return hook
     
     # 注册hooks到transformer blocks的attention层
@@ -97,13 +104,45 @@ def extract_kv_cache_and_attention(model, inputs, device):
     if hasattr(outputs, 'attentions') and outputs.attentions:
         for layer_idx, attn in enumerate(outputs.attentions):
             # attn shape: (batch, num_heads, seq_len, seq_len)
-            attention_dict[f'layer_{layer_idx}_full'] = attn.detach().cpu()
+            # 检查 attn 是否为 None
+            if attn is not None and hasattr(attn, 'detach'):
+                try:
+                    attention_dict[f'layer_{layer_idx}_full'] = attn.detach().cpu()
+                except AttributeError:
+                    # 如果 detach 失败，跳过这一层
+                    continue
     
     # 如果hooks没有捕获到，尝试从past_key_values获取
     if not kv_cache_dict and hasattr(outputs, 'past_key_values') and outputs.past_key_values is not None:
-        for layer_idx, (key, value) in enumerate(outputs.past_key_values):
-            kv_cache_dict[f'layer_{layer_idx}_key'] = key.detach().cpu()
-            kv_cache_dict[f'layer_{layer_idx}_value'] = value.detach().cpu()
+        past_key_values = outputs.past_key_values
+        # 处理 DynamicCache 或其他缓存类型
+        # DynamicCache 支持索引访问，返回 (key, value) 元组
+        for layer_idx in range(len(past_key_values)):
+            try:
+                layer_cache = past_key_values[layer_idx]
+                # past_key_values[layer_idx] 返回 (key, value) 元组
+                if isinstance(layer_cache, tuple) and len(layer_cache) >= 2:
+                    key = layer_cache[0]
+                    value = layer_cache[1]
+                    # 确保 key 和 value 不是 None，并且是 Tensor
+                    if key is not None and value is not None:
+                        # 检查是否是 Tensor 类型（有 detach 方法）
+                        if hasattr(key, 'detach') and hasattr(value, 'detach'):
+                            try:
+                                kv_cache_dict[f'layer_{layer_idx}_key'] = key.detach().cpu()
+                                kv_cache_dict[f'layer_{layer_idx}_value'] = value.detach().cpu()
+                            except AttributeError:
+                                # 如果 detach 失败，跳过这一层
+                                continue
+                        else:
+                            # 如果 key 或 value 没有 detach 方法，跳过
+                            continue
+                    else:
+                        # key 或 value 是 None，跳过这一层
+                        continue
+            except (IndexError, TypeError, AttributeError) as e:
+                # 如果访问失败，跳过这一层
+                continue
     
     return kv_cache_dict, attention_dict
 
@@ -147,7 +186,18 @@ def process_sentence_parallel(args):
     inputs = {'input_ids': input_ids}
     
     # 提取参考结果（FP32）
-    ref_kv_cache, ref_attention = extract_kv_cache_and_attention(ref_model, inputs, device)
+    try:
+        ref_kv_cache, ref_attention = extract_kv_cache_and_attention(ref_model, inputs, device)
+    except Exception as e:
+        import traceback
+        print(f"Error extracting reference KV cache for sentence {sentence_idx+1}: {e}")
+        print(f"Traceback: {''.join(traceback.format_exception(type(e), e, e.__traceback__))}")
+        return None
+    
+    # 检查是否成功提取
+    if not ref_kv_cache:
+        print(f"Warning: No reference KV cache extracted for sentence {sentence_idx+1}")
+        return None
     
     sentence_results = {}
     
@@ -157,15 +207,49 @@ def process_sentence_parallel(args):
             continue  # 跳过参考精度
         
         # 加载模型到指定精度（每个进程加载自己的模型副本）
-        test_model = GPT2LMHeadModel.from_pretrained(model_name).to(device)
-        test_model = test_model.to(dtype=prec_config.dtype)
-        test_model.eval()
+        # 使用 dtype 参数直接指定精度，避免 meta tensor 问题
+        try:
+            test_model = GPT2LMHeadModel.from_pretrained(
+                model_name,
+                dtype=prec_config.dtype,
+                low_cpu_mem_usage=True
+            )
+            test_model = test_model.to(device)
+            test_model.eval()
+        except Exception as e:
+            # 如果直接指定 dtype 失败，尝试先加载再转换
+            try:
+                test_model = GPT2LMHeadModel.from_pretrained(
+                    model_name,
+                    low_cpu_mem_usage=True
+                )
+                test_model = test_model.to(device)
+                test_model = test_model.to(dtype=prec_config.dtype)
+                test_model.eval()
+            except Exception as e2:
+                print(f"Error loading model for {prec_config.name}: {e2}")
+                continue
         
         # 转换输入到对应精度（input_ids不需要转换）
         test_inputs = inputs.copy()
         
         # 提取测试结果
-        test_kv_cache, test_attention = extract_kv_cache_and_attention(test_model, test_inputs, device)
+        try:
+            test_kv_cache, test_attention = extract_kv_cache_and_attention(test_model, test_inputs, device)
+        except Exception as e:
+            print(f"Error extracting test KV cache for sentence {sentence_idx+1}, precision {prec_config.name}: {e}")
+            del test_model
+            if device == 'cuda':
+                torch.cuda.empty_cache()
+            continue
+        
+        # 检查是否成功提取
+        if not test_kv_cache:
+            print(f"Warning: No test KV cache extracted for sentence {sentence_idx+1}, precision {prec_config.name}")
+            del test_model
+            if device == 'cuda':
+                torch.cuda.empty_cache()
+            continue
         
         # 清理模型以释放内存
         del test_model
@@ -205,8 +289,15 @@ def process_sentence_parallel(args):
             test_value_key = f'layer_{layer_idx}_value'
             
             if ref_value_key in ref_kv_cache and test_value_key in test_kv_cache:
-                ref_value = ref_kv_cache[ref_value_key].float()
-                test_value = test_kv_cache[test_value_key].float()
+                ref_value = ref_kv_cache[ref_value_key]
+                test_value = test_kv_cache[test_value_key]
+                
+                # 检查是否为 None
+                if ref_value is None or test_value is None:
+                    continue
+                
+                ref_value = ref_value.float()
+                test_value = test_value.float()
                 
                 if len(ref_value.shape) == 4:
                     for token_idx in range(seq_len):
@@ -231,6 +322,10 @@ def process_sentence_parallel(args):
                 
                 if test_attn_key in test_attention:
                     test_attn = test_attention[test_attn_key]
+                    
+                    # 检查是否为 None
+                    if ref_attn is None or test_attn is None:
+                        continue
                     
                     if len(ref_attn.shape) == 4:
                         for token_idx in range(seq_len):
@@ -291,9 +386,18 @@ def run_experiment():
             pass
     
     # 尝试添加更多精度：FP64（double precision）
+    # 注意：FP64在GPU上通常不被支持或性能很差，但我们可以尝试
     if device == 'cpu':
         # CPU上可以测试FP64
         precision_configs.append(PrecisionConfig("FP64", torch.float64, device))
+    elif device == 'cuda':
+        # 在GPU上尝试FP64（虽然可能很慢或不支持）
+        try:
+            test_tensor = torch.tensor([1.0], dtype=torch.float64).to(device)
+            precision_configs.append(PrecisionConfig("FP64", torch.float64, device))
+        except:
+            # GPU可能不支持FP64，跳过
+            pass
     
     precision_configs = [p for p in precision_configs if p is not None]
     
@@ -339,8 +443,22 @@ def run_experiment():
     
     # 以FP32作为参考（最高精度）
     print("Loading FP32 reference model...")
-    ref_model = GPT2LMHeadModel.from_pretrained(model_name).to(device)
-    ref_model.eval()
+    try:
+        ref_model = GPT2LMHeadModel.from_pretrained(
+            model_name,
+            dtype=torch.float32,
+            low_cpu_mem_usage=True
+        )
+        ref_model = ref_model.to(device)
+        ref_model.eval()
+    except Exception as e:
+        # 如果直接指定 dtype 失败，尝试默认方式
+        ref_model = GPT2LMHeadModel.from_pretrained(
+            model_name,
+            low_cpu_mem_usage=True
+        )
+        ref_model = ref_model.to(device)
+        ref_model.eval()
     
     # 存储所有结果
     all_results = {}
@@ -445,15 +563,20 @@ def generate_error_plots(all_results, sentences, plots_dir):
         kv_std_errors = [np.std(kv_errors_by_token[pos]) for pos in token_positions]
         
         token_positions_attn = sorted(attn_errors_by_token.keys())
-        if not token_positions_attn:
-            print(f"    Warning: {prec_name} has no Attention error data")
-            continue
+        has_attn_data = bool(token_positions_attn)
         
-        attn_mean_errors = [np.mean(attn_errors_by_token[pos]) for pos in token_positions_attn]
-        attn_std_errors = [np.std(attn_errors_by_token[pos]) for pos in token_positions_attn]
+        if has_attn_data:
+            attn_mean_errors = [np.mean(attn_errors_by_token[pos]) for pos in token_positions_attn]
+            attn_std_errors = [np.std(attn_errors_by_token[pos]) for pos in token_positions_attn]
+        else:
+            print(f"    Warning: {prec_name} has no Attention error data, will only plot KV cache")
         
-        # 创建图表
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+        # 创建图表 - 如果有 attention 数据创建两个子图，否则只创建 KV cache 图
+        if has_attn_data:
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+        else:
+            fig, ax1 = plt.subplots(1, 1, figsize=(12, 5))
+            ax2 = None
         
         # KV Cache误差图
         ax1.plot(token_positions, kv_mean_errors, 'b-o', label='Mean Absolute Error', linewidth=2, markersize=6)
@@ -471,21 +594,22 @@ def generate_error_plots(all_results, sentences, plots_dir):
         ax1.set_xticks(token_positions)
         ax1.set_xticklabels([int(x) for x in token_positions])
         
-        # Attention Kernel误差图
-        ax2.plot(token_positions_attn, attn_mean_errors, 'r-o', label='Mean Absolute Error', linewidth=2, markersize=6)
-        ax2.fill_between(token_positions_attn,
-                         [m - s for m, s in zip(attn_mean_errors, attn_std_errors)],
-                         [m + s for m, s in zip(attn_mean_errors, attn_std_errors)],
-                         alpha=0.3, color='red', label='±1 Std Dev')
-        ax2.set_xlabel('Token Position', fontsize=12)
-        ax2.set_ylabel('Absolute Error', fontsize=12)
-        ax2.set_title(f'{prec_name} - Attention Kernel Error vs Token Position', fontsize=14, fontweight='bold')
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
-        ax2.set_yscale('log')
-        # 设置x轴只显示整数
-        ax2.set_xticks(token_positions_attn)
-        ax2.set_xticklabels([int(x) for x in token_positions_attn])
+        # Attention Kernel误差图（如果有数据）
+        if has_attn_data and ax2 is not None:
+            ax2.plot(token_positions_attn, attn_mean_errors, 'r-o', label='Mean Absolute Error', linewidth=2, markersize=6)
+            ax2.fill_between(token_positions_attn,
+                             [m - s for m, s in zip(attn_mean_errors, attn_std_errors)],
+                             [m + s for m, s in zip(attn_mean_errors, attn_std_errors)],
+                             alpha=0.3, color='red', label='±1 Std Dev')
+            ax2.set_xlabel('Token Position', fontsize=12)
+            ax2.set_ylabel('Absolute Error', fontsize=12)
+            ax2.set_title(f'{prec_name} - Attention Kernel Error vs Token Position', fontsize=14, fontweight='bold')
+            ax2.legend()
+            ax2.grid(True, alpha=0.3)
+            ax2.set_yscale('log')
+            # 设置x轴只显示整数
+            ax2.set_xticks(token_positions_attn)
+            ax2.set_xticklabels([int(x) for x in token_positions_attn])
         
         plt.tight_layout()
         output_path = os.path.join(plots_dir, f'error_analysis_{prec_name}.jpg')
@@ -524,12 +648,12 @@ def generate_summary_plot(all_results, plots_dir):
                     attn_errors_by_token[token_idx] = []
                 attn_errors_by_token[token_idx].append(err_data['abs_error'])
         
-        if kv_errors_by_token and attn_errors_by_token:
+        if kv_errors_by_token:
             token_positions = sorted(kv_errors_by_token.keys())
             kv_mean_errors = [np.mean(kv_errors_by_token[pos]) for pos in token_positions]
             
-            token_positions_attn = sorted(attn_errors_by_token.keys())
-            attn_mean_errors = [np.mean(attn_errors_by_token[pos]) for pos in token_positions_attn]
+            token_positions_attn = sorted(attn_errors_by_token.keys()) if attn_errors_by_token else []
+            attn_mean_errors = [np.mean(attn_errors_by_token[pos]) for pos in token_positions_attn] if token_positions_attn else []
             
             precision_data[prec_name] = {
                 'kv_positions': token_positions,
@@ -542,8 +666,15 @@ def generate_summary_plot(all_results, plots_dir):
         print("    Warning: No valid precision data for summary plot")
         return
     
-    # 创建综合图表
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10))
+    # 检查是否有 attention 数据
+    has_any_attn_data = any(data['attn_positions'] for data in precision_data.values())
+    
+    # 创建综合图表 - 如果有 attention 数据创建两个子图，否则只创建 KV cache 图
+    if has_any_attn_data:
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10))
+    else:
+        fig, ax1 = plt.subplots(1, 1, figsize=(14, 5))
+        ax2 = None
     
     # 颜色列表
     colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
@@ -572,28 +703,31 @@ def generate_summary_plot(all_results, plots_dir):
         ax1.set_xticks(token_positions)
         ax1.set_xticklabels([int(x) for x in token_positions])
     
-    # Attention Kernel综合图
-    for idx, (prec_name, data) in enumerate(precision_data.items()):
-        color = colors[idx % len(colors)]
-        marker = markers[idx % len(markers)]
-        ax2.plot(data['attn_positions'], data['attn_errors'], 
-                marker=marker, color=color, label=prec_name, 
-                linewidth=2, markersize=6)
-    
-    ax2.set_xlabel('Token Position', fontsize=12)
-    ax2.set_ylabel('Absolute Error', fontsize=12)
-    ax2.set_title('Attention Kernel Error vs Token Position (All Precisions)', fontsize=14, fontweight='bold')
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    ax2.set_yscale('log')
-    if precision_data:
-        # 获取所有token位置并合并
-        all_positions = set()
-        for data in precision_data.values():
-            all_positions.update(data['attn_positions'])
-        token_positions_attn = sorted(all_positions)
-        ax2.set_xticks(token_positions_attn)
-        ax2.set_xticklabels([int(x) for x in token_positions_attn])
+    # Attention Kernel综合图（如果有数据）
+    if has_any_attn_data and ax2 is not None:
+        for idx, (prec_name, data) in enumerate(precision_data.items()):
+            if data['attn_positions']:  # 只绘制有 attention 数据的精度
+                color = colors[idx % len(colors)]
+                marker = markers[idx % len(markers)]
+                ax2.plot(data['attn_positions'], data['attn_errors'], 
+                        marker=marker, color=color, label=prec_name, 
+                        linewidth=2, markersize=6)
+        
+        ax2.set_xlabel('Token Position', fontsize=12)
+        ax2.set_ylabel('Absolute Error', fontsize=12)
+        ax2.set_title('Attention Kernel Error vs Token Position (All Precisions)', fontsize=14, fontweight='bold')
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        ax2.set_yscale('log')
+        if precision_data:
+            # 获取所有token位置并合并
+            all_positions = set()
+            for data in precision_data.values():
+                all_positions.update(data['attn_positions'])
+            token_positions_attn = sorted(all_positions)
+            if token_positions_attn:
+                ax2.set_xticks(token_positions_attn)
+                ax2.set_xticklabels([int(x) for x in token_positions_attn])
     
     plt.tight_layout()
     output_path = os.path.join(plots_dir, 'error_analysis_summary.jpg')

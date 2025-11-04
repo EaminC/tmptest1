@@ -1,0 +1,36 @@
+{
+  "precisions": {
+    "FP16": {
+      "kv_cache": {
+        "mean_error": 0.0009082873425541038,
+        "std_error": 0.0004694613801789922,
+        "min_error": 2.6274023184669204e-05,
+        "max_error": 0.0023352603893727064,
+        "total_samples": 480
+      },
+      "attention": {
+        "mean_error": null,
+        "std_error": null,
+        "min_error": null,
+        "max_error": null,
+        "total_samples": 0
+      }
+    },
+    "BF16": {
+      "kv_cache": {
+        "mean_error": 0.007834945051460334,
+        "std_error": 0.004073017089391906,
+        "min_error": 0.00023270834935829043,
+        "max_error": 0.020665951073169708,
+        "total_samples": 480
+      },
+      "attention": {
+        "mean_error": null,
+        "std_error": null,
+        "min_error": null,
+        "max_error": null,
+        "total_samples": 0
+      }
+    }
+  }
+}

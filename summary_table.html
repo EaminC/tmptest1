@@ -5,37 +5,46 @@
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
         h1 { color: #333; }
-        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        th { background-color: #4CAF50; color: white; }
-        tr:nth-child(even) { background-color: #f2f2f2; }
-        tr:hover { background-color: #f5f5f5; }
+        .table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+        .table th, .table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        .table th { background-color: #4CAF50; color: white; }
+        .table tr:nth-child(even) { background-color: #f2f2f2; }
+        .table tr:hover { background-color: #f5f5f5; }
     </style>
 </head>
 <body>
     <h1>Error Summary Table</h1>
     <p><strong>KV Cache Mean Error</strong> (compared to FP32 reference)</p>
-    <table>
-        <thead>
-            <tr>
-                <th>Precision</th>
-                <th>CPU-x86_64</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td>BF16</td>
-                <td>8.304791e-03</td>
-            </tr>
-            <tr>
-                <td>FP16</td>
-                <td>1.005891e-03</td>
-            </tr>
-            <tr>
-                <td>FP64</td>
-                <td>6.014521e-07</td>
-            </tr>
-        </tbody>
-    </table>
+<table border="1" class="dataframe table table-striped" id="summary-table">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>CPU-x86_64</th>
+      <th>GPU-NVIDIA-H100-80GB-HBM3</th>
+    </tr>
+    <tr>
+      <th>Precision</th>
+      <th></th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>BF16</th>
+      <td>8.304791e-03</td>
+      <td>7.834945e-03</td>
+    </tr>
+    <tr>
+      <th>FP16</th>
+      <td>1.005891e-03</td>
+      <td>9.082873e-04</td>
+    </tr>
+    <tr>
+      <th>FP64</th>
+      <td>6.014521e-07</td>
+      <td></td>
+    </tr>
+  </tbody>
+</table>
 </body>
 </html>
