@@ -1,0 +1,52 @@
+{
+  "precisions": {
+    "FP16": {
+      "kv_cache": {
+        "mean_error": 0.001005891364806833,
+        "std_error": 0.0005590996873036073,
+        "min_error": 2.650645183166489e-05,
+        "max_error": 0.0037781966384500265,
+        "total_samples": 9600
+      },
+      "attention": {
+        "mean_error": 6.910068971592409e-05,
+        "std_error": 5.00935701144146e-05,
+        "min_error": 0.0,
+        "max_error": 0.00039242408820427954,
+        "total_samples": 4800
+      }
+    },
+    "BF16": {
+      "kv_cache": {
+        "mean_error": 0.00830479140417386,
+        "std_error": 0.0045635365613575915,
+        "min_error": 0.00020407406555023044,
+        "max_error": 0.03049304336309433,
+        "total_samples": 9600
+      },
+      "attention": {
+        "mean_error": 0.0005665657441538012,
+        "std_error": 0.00040321216905323524,
+        "min_error": 0.0,
+        "max_error": 0.003162693465128541,
+        "total_samples": 4800
+      }
+    },
+    "FP64": {
+      "kv_cache": {
+        "mean_error": 6.014521371226304e-07,
+        "std_error": 3.137357461533742e-07,
+        "min_error": 2.0917317655744228e-08,
+        "max_error": 2.259067969134776e-06,
+        "total_samples": 9600
+      },
+      "attention": {
+        "mean_error": 3.626243010363776e-08,
+        "std_error": 2.4840342154104373e-08,
+        "min_error": 0.0,
+        "max_error": 1.868134233973251e-07,
+        "total_samples": 4800
+      }
+    }
+  }
+}
