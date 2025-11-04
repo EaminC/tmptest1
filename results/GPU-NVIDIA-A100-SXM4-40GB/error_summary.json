@@ -1,0 +1,52 @@
+{
+  "precisions": {
+    "FP16": {
+      "kv_cache": {
+        "mean_error": 0.0009633370877149143,
+        "std_error": 0.0005429430731829016,
+        "min_error": 2.723110083024949e-05,
+        "max_error": 0.005110496189445257,
+        "total_samples": 1920
+      },
+      "attention": {
+        "mean_error": null,
+        "std_error": null,
+        "min_error": null,
+        "max_error": null,
+        "total_samples": 0
+      }
+    },
+    "BF16": {
+      "kv_cache": {
+        "mean_error": 0.00853677622685609,
+        "std_error": 0.004924771994427074,
+        "min_error": 0.00021419988479465246,
+        "max_error": 0.04232977703213692,
+        "total_samples": 1920
+      },
+      "attention": {
+        "mean_error": null,
+        "std_error": null,
+        "min_error": null,
+        "max_error": null,
+        "total_samples": 0
+      }
+    },
+    "FP64": {
+      "kv_cache": {
+        "mean_error": 4.463085193430317e-07,
+        "std_error": 2.322401122714295e-07,
+        "min_error": 1.5660168273257113e-08,
+        "max_error": 1.195128220388142e-06,
+        "total_samples": 1440
+      },
+      "attention": {
+        "mean_error": null,
+        "std_error": null,
+        "min_error": null,
+        "max_error": null,
+        "total_samples": 0
+      }
+    }
+  }
+}

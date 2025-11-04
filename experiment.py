@@ -207,28 +207,18 @@ def process_sentence_parallel(args):
             continue  # 跳过参考精度
         
         # 加载模型到指定精度（每个进程加载自己的模型副本）
-        # 使用 dtype 参数直接指定精度，避免 meta tensor 问题
+        # 避免 meta tensor 问题：不使用 low_cpu_mem_usage，分步加载
         try:
-            test_model = GPT2LMHeadModel.from_pretrained(
-                model_name,
-                dtype=prec_config.dtype,
-                low_cpu_mem_usage=True
-            )
+            # 先加载到 CPU（不使用 low_cpu_mem_usage 避免 meta tensor）
+            test_model = GPT2LMHeadModel.from_pretrained(model_name)
+            # 移动到设备
             test_model = test_model.to(device)
+            # 转换精度
+            test_model = test_model.to(dtype=prec_config.dtype)
             test_model.eval()
         except Exception as e:
-            # 如果直接指定 dtype 失败，尝试先加载再转换
-            try:
-                test_model = GPT2LMHeadModel.from_pretrained(
-                    model_name,
-                    low_cpu_mem_usage=True
-                )
-                test_model = test_model.to(device)
-                test_model = test_model.to(dtype=prec_config.dtype)
-                test_model.eval()
-            except Exception as e2:
-                print(f"Error loading model for {prec_config.name}: {e2}")
-                continue
+            print(f"Error loading model for {prec_config.name}: {e}")
+            continue
         
         # 转换输入到对应精度（input_ids不需要转换）
         test_inputs = inputs.copy()
@@ -444,21 +434,13 @@ def run_experiment():
     # 以FP32作为参考（最高精度）
     print("Loading FP32 reference model...")
     try:
-        ref_model = GPT2LMHeadModel.from_pretrained(
-            model_name,
-            dtype=torch.float32,
-            low_cpu_mem_usage=True
-        )
+        # 先加载到 CPU，避免 meta tensor 问题
+        ref_model = GPT2LMHeadModel.from_pretrained(model_name)
         ref_model = ref_model.to(device)
         ref_model.eval()
     except Exception as e:
-        # 如果直接指定 dtype 失败，尝试默认方式
-        ref_model = GPT2LMHeadModel.from_pretrained(
-            model_name,
-            low_cpu_mem_usage=True
-        )
-        ref_model = ref_model.to(device)
-        ref_model.eval()
+        print(f"Error loading reference model: {e}")
+        raise
     
     # 存储所有结果
     all_results = {}
