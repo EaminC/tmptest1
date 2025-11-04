@@ -1,0 +1,9 @@
+# Error Summary Table
+
+**KV Cache Mean Error** (compared to FP32 reference)
+
+| Precision | CPU-x86_64 |
+|---|---|
+| BF16 | 8.304791e-03 |
+| FP16 | 1.005891e-03 |
+| FP64 | 6.014521e-07 |
